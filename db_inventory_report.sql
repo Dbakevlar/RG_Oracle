@@ -1,5 +1,6 @@
 /*------------------------------------------------------------------
   db_inventory_report.sql
+  Author  : Kellyn Gorman, Redgate
   Purpose  : Database inventory report for POCs
              Of non-system schemas.
   Usage    : sqlplus / as sysdba @db_inventory_report.sql
@@ -7,7 +8,6 @@
              (the directory from which SQL*Plus was started).
 -------------------------------------------------------------------*/
 
--- Basic report formatting
 SET ECHO        OFF
 SET FEEDBACK    ON
 SET HEADING     ON
@@ -18,13 +18,11 @@ SET TRIMSPOOL   ON
 SET TAB         OFF
 SET TERMOUT     OFF
 
--- Get database name for spool file
 COLUMN db_name NEW_VALUE DB_NAME NOPRINT
 SELECT LOWER(name) db_name FROM v$database;
 
 SET TERMOUT ON
 
--- Spool to a text file in the current directory
 SPOOL db_inventory_&&DB_NAME..txt
 
 TTITLE OFF
@@ -266,6 +264,44 @@ FROM (
 )
 GROUP BY owner
 ORDER BY hidden_object_count DESC, hidden_schema;
+
+/******************************************************************
+* SECTION 6: Invalid Objects per Schema
+* - invalid_objects_report.sql
+* - Reports invalid database objects grouped by owner and object type
+* - This must be run with user access to DBA_OBJECTS (or replace with ALL_OBJECTS/USER_OBJECTS)
+******************************************************************* */
+PROMPT ============================================================
+PROMPT Section 6 - Invalid Objects by Schema
+PROMPT ============================================================
+
+SET PAGESIZE  60
+SET LINESIZE  180
+SET VERIFY    OFF
+SET FEEDBACK  ON
+SET TRIMSPOOL ON
+
+COLUMN owner        HEADING 'Owner'        FORMAT A25
+COLUMN object_type  HEADING 'Object Type'  FORMAT A25
+COLUMN object_name  HEADING 'Object Name'  FORMAT A40
+COLUMN status       HEADING 'Status'       FORMAT A10
+
+BREAK  ON owner SKIP 1 ON object_type SKIP 1
+COMPUTE COUNT OF object_name ON owner
+COMPUTE COUNT OF object_name ON object_type
+
+SELECT owner,
+       object_type,
+       object_name,
+       status
+  FROM dba_objects
+ WHERE status <> 'VALID'
+ ORDER BY owner,
+          object_type,
+          object_name;
+
+CLEAR BREAKS
+CLEAR COMPUTES
 
 PROMPT
 PROMPT ############################################################

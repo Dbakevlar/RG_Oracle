@@ -1,6 +1,7 @@
 /*------------------------------------------------------------------
 +++This report is resource-consuming-  only run on NON-PRODUCTION databases.+++
 cross_schema_usg_rpt.sql
+Author  : Kellyn Gorman, Redgate
 Purpose : A report showing non-system schemas that:
 1) Call other non-system schemas in code
 2) Have object privileges on other non-system schemas
@@ -162,4 +163,4 @@ PROMPT ==============================================================
 PROMPT END OF REPORT
 PROMPT ==============================================================
 SPOOL OFF
-EXIT
+--EXIT

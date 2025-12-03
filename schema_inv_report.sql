@@ -1,5 +1,6 @@
 /*------------------------------------------------------------------
   schema_inv_report.sql
+  Author  : Kellyn Gorman, Redgate
   Purpose  : Generate an inventory report for a
              single schema (user) in an Oracle database.
   Usage    : sqlplus / as sysdba @schema_inv_report.sql
@@ -223,6 +224,47 @@ FROM (
 )
 GROUP BY owner
 ORDER BY hidden_object_count DESC, hidden_schema;
+
+PROMPT
+
+/* ****************************************************************
+*  SECTION 6:  invalid_objects_report.sql
+*  "Which objects are invalid in what schemas?"
+*  Reports invalid database objects grouped by owner and object type
+*  Run as a user with access to DBA_OBJECTS (or replace with ALL_OBJECTS/USER_OBJECTS)
+******************************************************************* */
+PROMPT ============================================================
+PROMPT Section 6 - Invalid Objects by Schema
+PROMPT ============================================================
+
+SET PAGESIZE  60
+SET LINESIZE  180
+SET VERIFY    OFF
+SET FEEDBACK  ON
+SET TRIMSPOOL ON
+
+COLUMN owner        HEADING 'Owner'        FORMAT A25
+COLUMN object_type  HEADING 'Object Type'  FORMAT A25
+COLUMN object_name  HEADING 'Object Name'  FORMAT A40
+COLUMN status       HEADING 'Status'       FORMAT A10
+
+BREAK  ON owner SKIP 1 ON object_type SKIP 1
+COMPUTE COUNT OF object_name ON owner
+COMPUTE COUNT OF object_name ON object_type
+
+SELECT owner,
+       object_type,
+       object_name,
+       status
+  FROM dba_objects
+ WHERE status <> 'VALID'
+ AND owner = '&&SCHEMA_NAME_UPPER'
+ ORDER BY owner,
+          object_type,
+          object_name;
+
+CLEAR BREAKS
+CLEAR COMPUTES
 
 PROMPT
 PROMPT ############################################################
