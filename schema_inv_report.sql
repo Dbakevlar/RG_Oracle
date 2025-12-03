@@ -192,18 +192,19 @@ PROMPT
  *   - Invisible indexes (VISIBILITY = 'INVISIBLE')
  ******************************************************************/
 PROMPT ============================================================
-PROMPT Section 5 - Hidden or Invisible Objects in Selected Schema
-PROMPT (Hidden columns or invisible indexes in &&SCHEMA_NAME_UPPER)
+PROMPT Section 5a - Hidden Objects in Selected Schema
+PROMPT (Hidden columns in &&SCHEMA_NAME_UPPER)
 PROMPT ============================================================
 
-COLUMN hidden_schema            FORMAT A30          HEADING 'Schema Name'
-COLUMN hidden_object_count      FORMAT 999,999,999  HEADING 'Hidden/Invisible Object Count'
+COLUMN inv_idx_schema           FORMAT A30          HEADING 'Schema Name'
+COLUMN hidden_columns           FORMAT A30          HEADING 'Schema Name'
+COLUMN inv_col_count            FORMAT 999,999,999  HEADING 'Invisible Object Count'
+COLUMN hidden_col_count         FORMAT 999,999,999  HEADING 'Hidden Object Count'
 
 SELECT
-    owner AS hidden_schema,
-    COUNT(*) AS hidden_object_count
+    owner AS hidden_columns,
+    COUNT(*) AS hidden_col_count
 FROM (
-    -- Hidden or internal columns
     SELECT
         owner,
         table_name,
@@ -212,8 +213,21 @@ FROM (
     WHERE  owner = '&&SCHEMA_NAME_UPPER'
       AND  (hidden_column = 'YES'
             OR column_name LIKE 'SYS\_%' ESCAPE '\')
-    UNION ALL
-    -- Invisible indexes
+)
+GROUP BY owner
+ORDER BY hidden_col_count DESC, hidden_columns;
+
+--    UNION ALL
+
+PROMPT ============================================================
+PROMPT Section 5b - Invisible Objects in Selected Schema
+PROMPT (Invisible indexes in &&SCHEMA_NAME_UPPER)
+PROMPT ============================================================
+
+SELECT
+    owner AS inv_idx_schema,
+    COUNT(*) AS inv_col_count
+FROM (
     SELECT
         owner,
         table_name,
@@ -223,7 +237,7 @@ FROM (
       AND  visibility = 'INVISIBLE'
 )
 GROUP BY owner
-ORDER BY hidden_object_count DESC, hidden_schema;
+ORDER BY inv_col_count DESC, inv_idx_schema;
 
 PROMPT
 
