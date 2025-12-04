@@ -5,7 +5,6 @@ Author  : Kellyn Gorman, Redgate
 Purpose : A report showing non-system schemas that:
 1) Call other non-system schemas in code
 2) Have object privileges on other non-system schemas
-
 Output : cross_schema_usage_<db>.txt in executing directory
 ------------------------------------------------------------------*/
 
@@ -42,9 +41,7 @@ PROMPT ==============================================================
 SECTION 1 - Cross-schema Calls in Code
 ********************************************************************/
 PROMPT
-PROMPT --------------------------------------------------------------
 PROMPT SECTION 1 - SCHEMA REFERENCES IN CODE
-PROMPT --------------------------------------------------------------
 PROMPT This section shows one schema directly calling another
 PROMPT schema from code using explicit object references.
 PROMPT Format: SCHEMA_A -> SCHEMA_B = number of objects involved
@@ -74,18 +71,17 @@ COUNT(DISTINCT s.name) AS object_count
 FROM dba_source s
 JOIN non_sys_users u_src ON s.owner = u_src.username
 JOIN non_sys_users u ON u.username <> s.owner
-WHERE UPPER(s.text) LIKE '%' || u.username || '.%'
+WHERE UPPER(s.text) LIKE '%' || u_src.username || '.%'
 GROUP BY s.owner, u.username
-ORDER BY 1,2;
+ORDER BY 1,2
+/
 
 PROMPT
 
 /*******************************************************************
 SECTION 2 - Cross-schema Object Privileges
 ********************************************************************/
-PROMPT --------------------------------------------------------------
 PROMPT SECTION 2 - CROSS-SCHEMA PRIVILEGES
-PROMPT --------------------------------------------------------------
 PROMPT This section identifies object privileges where one schema
 PROMPT explicitly has access to objects owned by another schema.
 PROMPT
@@ -114,8 +110,7 @@ p.owner AS owner_schema,
 p.privilege AS privilege_type,
 COUNT(*) AS object_count
 FROM dba_tab_privs p
-WHERE p.grantee IN (SELECT username FROM non_sys_users)
-AND p.owner IN (SELECT username FROM non_sys_users)
+WHERE p.owner IN (SELECT username FROM non_sys_users)
 AND p.grantee <> p.owner
 GROUP BY p.grantee, p.owner, p.privilege
 ORDER BY 1,2,3;
@@ -125,9 +120,7 @@ PROMPT
 /*******************************************************************
 SECTION 3 - Summary View
 ********************************************************************/
-PROMPT --------------------------------------------------------------
 PROMPT SECTION 3 - SUMMARY MATRIX
-PROMPT --------------------------------------------------------------
 PROMPT This shows how many other schemas each schema touches
 PROMPT either via code or permissions.
 PROMPT
@@ -144,13 +137,16 @@ WHERE s.owner != u.username
 ),
 priv_refs AS (
 SELECT grantee AS caller, owner AS target
+--shift the grantee out of the caller list, screws up the schema list
 FROM dba_tab_privs
-WHERE grantee != owner
+WHERE type='USER'
+AND grantee != owner
 ),
 combined AS (
 SELECT DISTINCT caller, target FROM code_refs
 UNION
 SELECT DISTINCT caller, target FROM priv_refs
+--need to bring in the grantee, but it's not the same as a schema!
 )
 SELECT caller AS schema,
 COUNT(DISTINCT target) AS schemas_touched
@@ -158,7 +154,6 @@ FROM combined
 GROUP BY caller
 ORDER BY schemas_touched DESC;
 
-PROMPT
 PROMPT ==============================================================
 PROMPT END OF REPORT
 PROMPT ==============================================================
