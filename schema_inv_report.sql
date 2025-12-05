@@ -23,8 +23,8 @@ COLUMN db_name NEW_VALUE DB_NAME NOPRINT
 SELECT LOWER(name) db_name FROM v$database;
 
 SET TERMOUT ON
-
 PROMPT
+
 PROMPT ############################################################
 PROMPT #         ORACLE DATABASE / SCHEMA INVENTORY REPORT        #
 PROMPT #     Database: &&DB_NAME                                  #
@@ -55,6 +55,7 @@ BTITLE OFF
  * SECTION 1: Database Overview
  * "Basic information about this Oracle database"
  ******************************************************************/
+
 PROMPT ============================================================
 PROMPT Section 1 - Database Overview
 PROMPT (Basic information: database name, version, platform, and role)
@@ -89,30 +90,27 @@ SELECT
 FROM   v$database d
 CROSS  JOIN v$instance i;
 
-PROMPT
+PROMPT ===============================================================
+PROMPT Section 1b: Multitenancy Architecture
+PROMPT Multitenant (PDB) Information and Size
+PROMPT ===============================================================
 
-/******************************************************************
- * SECTION 2: Total Objects in Selected Schema
- * "How many objects exist in this schema?"
- ******************************************************************/
-PROMPT ============================================================
-PROMPT Section 2 - Total Objects in Selected Schema
-PROMPT (Total number of objects owned by schema &&SCHEMA_NAME_UPPER)
-PROMPT ============================================================
+COLUMN name            FORMAT A25       HEADING 'Container Name'
+COLUMN backup_status   FORMAT A15       HEADING 'Backup Status'
+COLUMN total_size      FORMAT A15       HEADING 'Total Size in MB'
 
-COLUMN schema_name             FORMAT A30        HEADING 'Schema Name'
-COLUMN schema_object_count     FORMAT 999,999,999 HEADING 'Object Count'
-
-SELECT
-    '&&SCHEMA_NAME_UPPER' AS schema_name,
-    COUNT(*)              AS schema_object_count
-FROM   dba_objects
-WHERE  owner = '&&SCHEMA_NAME_UPPER';
+select con_id AS "Container ID", 
+name, 
+pdb_count AS "PDBs Owned", 
+local_undo AS "Local Undo", 
+backup_status, 
+total_size/1024/1024 
+from v$containers;
 
 PROMPT
 
 /******************************************************************
- * SECTION 3: Schema Summary and Object Count
+ * SECTION 2: Schema Summary and Object Count
  * "What kind of schema is this and how many objects
  *               does it own?"
  * Notes:
@@ -120,12 +118,14 @@ PROMPT
  *       PERMANENT : Normal, active schema
  *       LOCKED    : Accounts currently locked
  ******************************************************************/
-PROMPT ============================================================
-PROMPT Section 3 - Schema Summary
-PROMPT (Account details and object count for &&SCHEMA_NAME_UPPER)
-PROMPT ============================================================
 
-COLUMN schema_type   FORMAT A10        HEADING 'Schema Type'
+PROMPT ==============================================================
+PROMPT Section 2 - Schema Summary
+PROMPT (Account details and object count for &&SCHEMA_NAME_UPPER)
+PROMPT ==============================================================
+
+COLUMN schema_name   FORMAT A25        HEADING 'Schema Name'
+COLUMN schema_type   FORMAT A15        HEADING 'Schema Type'
 COLUMN object_count  FORMAT 999,999,999 HEADING 'Object Count'
 COLUMN account_status FORMAT A25       HEADING 'Account Status'
 COLUMN default_ts     FORMAT A30       HEADING 'Default Tablespace'
@@ -151,14 +151,217 @@ WHERE  u.username = '&&SCHEMA_NAME_UPPER';
 PROMPT
 
 /******************************************************************
- * SECTION 4: Partitioning and Subpartitioning in the Schema
+ * SECTION 3: Tablespace Information for Schema
+ * "What Tablespaces does the user have available and how much space?"
+ ******************************************************************/
+
+PROMPT ==============================================================
+PROMPT Section 3 - Tablespace Names and Space
+PROMPT Report on tablespace used by the schema
+PROMPT ==============================================================
+
+SET TERMOUT ON
+SET ECHO OFF
+SET VERIFY OFF
+SET PAGESIZE 100
+SET LINESIZE 160
+SET TRIMSPOOL ON
+
+VARIABLE v_username VARCHAR2(30);
+
+BEGIN
+    :v_username := '&&SCHEMA_NAME_UPPER';
+END;
+/
+
+COLUMN rep_user NEW_VALUE rep_user
+SELECT :v_username AS rep_user FROM dual;
+
+TTITLE CENTER 'Tablespace Quota and Usage for &rep_user' SKIP 1
+
+COLUMN username        FORMAT A20               HEADING 'User'
+COLUMN tablespace_name FORMAT A30               HEADING 'Tablespace'
+COLUMN quota_type      FORMAT A10               HEADING 'Quota Type'
+COLUMN quota_mb        FORMAT 999,999,999.99    HEADING 'Quota MB'
+COLUMN used_mb         FORMAT 999,999,999.99    HEADING 'Used MB'
+COLUMN pct_used        FORMAT 999.99            HEADING '% Used'
+
+BREAK ON username SKIP 1
+
+WITH seg AS (
+    SELECT owner                 AS username,
+           tablespace_name,
+           SUM(bytes) / (1024*1024) AS used_mb
+    FROM   dba_segments
+    WHERE  owner = :v_username
+    GROUP  BY owner, tablespace_name
+),
+quota AS (
+    SELECT username,
+           tablespace_name,
+           max_bytes,
+           bytes
+    FROM   dba_ts_quotas
+    WHERE  username = :v_username
+)
+SELECT COALESCE(q.username, s.username)          AS username,
+       COALESCE(q.tablespace_name, s.tablespace_name) AS tablespace_name,
+       CASE 
+           WHEN q.max_bytes = -1 THEN 'UNLIMITED'
+           WHEN q.max_bytes IS NULL THEN 'NONE'
+           ELSE 'LIMITED'
+       END                                       AS quota_type,
+       CASE 
+           WHEN q.max_bytes IS NULL OR q.max_bytes = -1 THEN NULL
+           ELSE ROUND(q.max_bytes / (1024*1024), 2)
+       END                                       AS quota_mb,
+       NVL(ROUND(s.used_mb, 2), 0)               AS used_mb,
+       CASE 
+           WHEN q.max_bytes IS NULL 
+                OR q.max_bytes IN (-1, 0) 
+                OR s.used_mb IS NULL
+           THEN NULL
+           ELSE ROUND((s.used_mb * 1024*1024) / q.max_bytes * 100, 2)
+       END                                       AS pct_used
+FROM   quota q
+       FULL OUTER JOIN seg s
+         ON q.username       = s.username
+        AND q.tablespace_name = s.tablespace_name
+ORDER  BY tablespace_name;
+
+TTITLE OFF
+CLEAR COLUMNS
+CLEAR BREAKS
+
+/******************************************************************
+ * SECTION 4: Schema Privileges Information
+ * "What Privileges and roles does the schema have?"
+ ******************************************************************/
+
+PROMPT ============================================================
+PROMPT Section 4 - Schema Privileges and Roles
+PROMPT ============================================================
+
+SET TERMOUT ON
+SET ECHO OFF
+SET VERIFY OFF
+SET FEEDBACK ON
+SET PAGESIZE 200
+SET LINESIZE 200
+SET TRIMSPOOL ON
+
+VARIABLE v_username VARCHAR2(30);
+
+BEGIN
+    :v_username := '&&SCHEMA_NAME_UPPER';
+END;
+/
+
+COLUMN rep_user NEW_VALUE rep_user
+SELECT :v_username AS rep_user FROM dual;
+
+TTITLE CENTER 'Complete Grants Report for &rep_user' SKIP 1
+
+COLUMN privilege_type FORMAT A8   HEADING 'Type'
+COLUMN privilege_name FORMAT A30  HEADING 'Privilege/Role'
+COLUMN owner          FORMAT A20  HEADING 'Owner'
+COLUMN object_name    FORMAT A30  HEADING 'Object'
+COLUMN via            FORMAT A8   HEADING 'Via'
+COLUMN via_role       FORMAT A30  HEADING 'Role Source'
+COLUMN admin_option   FORMAT A5   HEADING 'ADMIN'
+COLUMN grantable      FORMAT A9   HEADING 'GRANTABLE'
+
+BREAK ON REPORT
+
+SELECT privilege_type,
+       privilege_name,
+       owner,
+       object_name,
+       via,
+       via_role,
+       admin_option,
+       grantable
+FROM (
+    SELECT 'ROLE'          AS privilege_type,
+           dr.granted_role AS privilege_name,
+           NULL            AS owner,
+           NULL            AS object_name,
+           'DIRECT'        AS via,
+           NULL            AS via_role,
+           dr.admin_option,
+           NULL            AS grantable
+    FROM   dba_role_privs dr
+    WHERE  dr.grantee = :v_username
+    UNION ALL
+    SELECT 'SYS_PRIV'      AS privilege_type,
+           dsp.privilege   AS privilege_name,
+           NULL            AS owner,
+           NULL            AS object_name,
+           'DIRECT'        AS via,
+           NULL            AS via_role,
+           dsp.admin_option,
+           NULL            AS grantable
+    FROM   dba_sys_privs dsp
+    WHERE  dsp.grantee = :v_username
+    UNION ALL
+    SELECT 'OBJ_PRIV'      AS privilege_type,
+           dtp.privilege   AS privilege_name,
+           dtp.owner       AS owner,
+           dtp.table_name  AS object_name,
+           'DIRECT'        AS via,
+           NULL            AS via_role,
+           NULL            AS admin_option,
+           dtp.grantable   AS grantable
+    FROM   dba_tab_privs dtp
+    WHERE  dtp.grantee = :v_username
+    UNION ALL
+    SELECT 'SYS_PRIV'      AS privilege_type,
+           rsp.privilege   AS privilege_name,
+           NULL            AS owner,
+           NULL            AS object_name,
+           'ROLE'          AS via,
+           dr.granted_role AS via_role,
+           rsp.admin_option,
+           NULL            AS grantable
+    FROM   dba_role_privs dr
+           JOIN role_sys_privs rsp
+             ON rsp.role = dr.granted_role
+    WHERE  dr.grantee = :v_username
+    UNION ALL
+    SELECT 'OBJ_PRIV'      AS privilege_type,
+           rtp.privilege   AS privilege_name,
+           rtp.owner       AS owner,
+           rtp.table_name  AS object_name,
+           'ROLE'          AS via,
+           dr.granted_role AS via_role,
+           NULL            AS admin_option,
+           rtp.grantable   AS grantable
+    FROM   dba_role_privs dr
+           JOIN role_tab_privs rtp
+             ON rtp.role = dr.granted_role
+    WHERE  dr.grantee = :v_username
+)
+ORDER BY privilege_type,
+         privilege_name,
+         owner,
+         object_name,
+         via,
+         via_role;
+
+TTITLE OFF
+CLEAR COLUMNS
+CLEAR BREAKS
+
+/******************************************************************
+ * SECTION 6: Partitioning and Subpartitioning in the Schema
  * "How does this schema use table partitioning?"
  * - partitioned_table_count      : Tables that are partitioned
  * - subpartitioned_table_count   : Partitioned tables that also
  *                                  use subpartitions
  ******************************************************************/
+
 PROMPT ============================================================
-PROMPT Section 4 - Partitioning Usage in Selected Schema
+PROMPT Section 6 - Partitioning Usage in Selected Schema
 PROMPT (Partitioned and subpartitioned tables in &&SCHEMA_NAME_UPPER)
 PROMPT ============================================================
 
@@ -184,15 +387,16 @@ GROUP BY owner;
 PROMPT
 
 /******************************************************************
- * SECTION 5: Hidden or Invisible Objects in the Schema
+ * SECTION 7: Hidden or Invisible Objects in the Schema
  * “Which objects in this schema are hidden or invisible?"
  * Here we treat as "hidden or invisible":
  *   - Hidden columns in tables (HIDDEN_COLUMN = 'YES')
  *   - Columns with internal SYS_ names
  *   - Invisible indexes (VISIBILITY = 'INVISIBLE')
  ******************************************************************/
+
 PROMPT ============================================================
-PROMPT Section 5a - Hidden Objects in Selected Schema
+PROMPT Section 7a - Hidden Objects in Selected Schema
 PROMPT (Hidden columns in &&SCHEMA_NAME_UPPER)
 PROMPT ============================================================
 
@@ -217,10 +421,9 @@ FROM (
 GROUP BY owner
 ORDER BY hidden_col_count DESC, hidden_columns;
 
---    UNION ALL
 
 PROMPT ============================================================
-PROMPT Section 5b - Invisible Objects in Selected Schema
+PROMPT Section 7b - Invisible Objects in Selected Schema
 PROMPT (Invisible indexes in &&SCHEMA_NAME_UPPER)
 PROMPT ============================================================
 
@@ -242,13 +445,14 @@ ORDER BY inv_col_count DESC, inv_idx_schema;
 PROMPT
 
 /* ****************************************************************
-*  SECTION 6:  invalid_objects_report.sql
+*  SECTION 8:  invalid_objects_report.sql
 *  "Which objects are invalid in what schemas?"
 *  Reports invalid database objects grouped by owner and object type
 *  Run as a user with access to DBA_OBJECTS (or replace with ALL_OBJECTS/USER_OBJECTS)
 ******************************************************************* */
+
 PROMPT ============================================================
-PROMPT Section 6 - Invalid Objects by Schema
+PROMPT Section 8 - Invalid Objects by Schema
 PROMPT ============================================================
 
 SET PAGESIZE  60

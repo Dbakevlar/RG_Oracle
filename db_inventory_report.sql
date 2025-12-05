@@ -37,21 +37,6 @@ PROMPT ############################################################
 PROMPT
 
 /******************************************************************
- * Helper: list of system/Oracle-maintained schemas to exclude
- * (Extend this list as needed for your environment.)
- ******************************************************************/
--- This condition will be reused in queries via copy/paste:
---   owner NOT IN (
---     'SYS','SYSTEM','SYSMAN','DBSNMP','OUTLN','XDB','MDSYS','ORDSYS',
---     'ORDDATA','ORDPLUGINS','WMSYS','OLAPSYS','SI_INFORMTN_SCHEMA',
---     'DMSYS','EXFSYS','DVSYS','MGMT_VIEW','FLOWS_FILES',
---     'APEX_PUBLIC_USER','ANONYMOUS','XS$NULL','LBACSYS',
---     'GSMADMIN_INTERNAL','GGSYS','DVF','AUDSYS',
---     'REMOTE_SCHEDULER_AGENT','SPATIAL_WFS_ADMIN_USR',
---     'SPATIAL_CSW_ADMIN_USR','SYSBACKUP','SYSDG','SYSKM','SYSRAC'
---   )
-
-/******************************************************************
  * SECTION 1: Database Overview
  * "Basic information about this Oracle database"
  ******************************************************************/
@@ -91,12 +76,86 @@ CROSS  JOIN v$instance i;
 
 PROMPT
 
+PROMPT ===============================================================
+PROMPT Section 1b: Multitenancy Architecture
+PROMPT Multitenant (PDB) Information and Size
+PROMPT ===============================================================
+
+COLUMN name            FORMAT A25       HEADING 'Container Name'
+COLUMN backup_status   FORMAT A15       HEADING 'Backup Status'
+COLUMN total_size      FORMAT A15       HEADING 'Total Size in MB'
+
+select con_id AS "Container ID", 
+name, 
+pdb_count AS "PDBs Owned", 
+local_undo AS "Local Undo", 
+backup_status, 
+total_size/1024/1024 
+from v$containers;
+
+PROMPT
+
 /******************************************************************
- * SECTION 2: Total Non-System Objects
+.* SECTION 2: Tablespace Free Space
+.* Report tablespace size, free space, used space and % free
+ ******************************************************************/
+
+SET TERMOUT ON
+SET ECHO OFF
+SET VERIFY OFF
+SET FEEDBACK ON
+SET PAGESIZE 100
+SET LINESIZE 160
+SET TRIMSPOOL ON
+
+
+PROMPT ============================================================
+PROMPT Section 2 - Tablespace Info and Space Available
+PROMPT Are the tablespaces the same and how much space is available?
+PROMPT ============================================================
+
+COLUMN tablespace_name FORMAT A30                HEADING 'Tablespace'
+COLUMN total_mb        FORMAT 999,999,999.99     HEADING 'Total MB'
+COLUMN free_mb         FORMAT 999,999,999.99     HEADING 'Free MB'
+COLUMN used_mb         FORMAT 999,999,999.99     HEADING 'Used MB'
+COLUMN pct_free        FORMAT 999.99             HEADING '% Free'
+
+BREAK ON REPORT
+COMPUTE SUM LABEL 'TOTAL:' OF total_mb free_mb used_mb ON REPORT
+
+-- Main query: permanent and undo tablespaces (from datafiles)
+WITH ts AS (
+    SELECT tablespace_name,
+           SUM(bytes) / (1024*1024) AS total_mb
+    FROM   dba_data_files
+    GROUP  BY tablespace_name
+),
+free AS (
+    SELECT tablespace_name,
+           SUM(bytes) / (1024*1024) AS free_mb
+    FROM   dba_free_space
+    GROUP  BY tablespace_name
+)
+SELECT t.tablespace_name,
+       t.total_mb,
+       NVL(f.free_mb, 0)                          AS free_mb,
+       (t.total_mb - NVL(f.free_mb, 0))           AS used_mb,
+       ROUND(NVL(f.free_mb, 0) / t.total_mb * 100, 2) AS pct_free
+FROM   ts t
+       LEFT JOIN free f
+              ON t.tablespace_name = f.tablespace_name
+ORDER  BY pct_free ASC;
+
+TTITLE OFF
+CLEAR COLUMNS
+CLEAR BREAKS
+
+/******************************************************************
+ * SECTION 3: Total Non-System Objects
  * "How many user objects exist in this database?"
  ******************************************************************/
 PROMPT ============================================================
-PROMPT Section 2 - Total Non-System Objects
+PROMPT Section 3 - Total Non-System Objects
 PROMPT (Total number of objects owned by non-system schemas)
 PROMPT ============================================================
 
@@ -117,7 +176,7 @@ WHERE  owner NOT IN (
 PROMPT
 
 /******************************************************************
- * SECTION 3: Non-System Schemas and Object Counts
+ * SECTION 4: Non-System Schemas and Object Counts
  * "Which user schemas exist and how many objects each owns?"
  * Notes:
  *   - Schema Type is a simple classification to help non-experts:
@@ -126,12 +185,12 @@ PROMPT
  *     * LOCKED    : Accounts currently locked
  ******************************************************************/
 PROMPT ============================================================
-PROMPT Section 3 - User Schemas and Their Object Counts
+PROMPT Section 4 - User Schemas and Their Object Counts
 PROMPT (Non-system schemas with a summary of their objects)
 PROMPT ============================================================
 
 COLUMN schema_name   FORMAT A30 HEADING 'Schema Name'
-COLUMN schema_type   FORMAT A10 HEADING 'Schema Type'
+COLUMN schema_type   FORMAT A15 HEADING 'Schema Type'
 COLUMN object_count  FORMAT 999,999,999 HEADING 'Object Count'
 
 SELECT
@@ -166,14 +225,14 @@ ORDER BY
 PROMPT
 
 /******************************************************************
- * SECTION 4: Schemas Using Partitioning and Subpartitioning
+ * SECTION 5: Schemas Using Partitioning and Subpartitioning
  * "Which schemas use table partitioning and subpartitioning?"
  * - partitioned_table_count      : Tables that are partitioned
  * - subpartitioned_table_count   : Partitioned tables that also
  *                                  use subpartitions
  ******************************************************************/
 PROMPT ============================================================
-PROMPT Section 4 - Schemas Using Partitioning
+PROMPT Section 5 - Schemas Using Partitioning
 PROMPT (Non-system schemas with partitioned and subpartitioned tables)
 PROMPT ============================================================
 
@@ -208,20 +267,18 @@ ORDER BY owner;
 PROMPT
 
 /******************************************************************
- * SECTION 5: Hidden or Invisible Objects by Schema
+ * SECTION 6: Hidden or Invisible Objects by Schema
+ * Splitting up hidden from invisible, as they may be addressed with separate policies
  * “Which schemas contain hidden or invisible objects?"
- * Here we treat as "hidden or invisible":
- *   - Hidden columns in tables (HIDDEN_COLUMN = 'YES')
- *   - Columns with internal SYS_ names
- *   - Invisible indexes (VISIBILITY = 'INVISIBLE')
  ******************************************************************/
 PROMPT ============================================================
-PROMPT Section 5 - Hidden or Invisible Objects by Schema
-PROMPT (Non-system schemas with hidden columns or invisible indexes)
+PROMPT Section 6 - Hidden Objects by Schema
 PROMPT ============================================================
 
 COLUMN hidden_schema            FORMAT A30          HEADING 'Schema Name'
-COLUMN hidden_object_count      FORMAT 999,999,999  HEADING 'Hidden/Invisible Object Count'
+COLUMN hidden_object_count      FORMAT 999,999,999  HEADING 'Hidden Object Count'
+COLUMN inv_schema               FORMAT A30          HEADING 'Schema Name'
+COLUMN inv_object_count      FORMAT 999,999,999  HEADING 'Invisible Object Count'
 
 SELECT
     owner AS hidden_schema,
@@ -244,7 +301,18 @@ FROM (
            'REMOTE_SCHEDULER_AGENT','SPATIAL_WFS_ADMIN_USR',
            'SPATIAL_CSW_ADMIN_USR','SYSBACKUP','SYSDG','SYSKM','SYSRAC'
        )
-    UNION ALL
+)
+GROUP BY owner
+ORDER BY hidden_object_count DESC, hidden_schema;
+    
+PROMPT =================================================================
+PROMPT Section 6b - Invisible indexes by Schema
+PROMPT =================================================================
+
+SELECT
+    owner AS inv_schema,
+    COUNT(*) AS inv_object_count
+FROM (
     -- Invisible indexes
     SELECT
         owner,
@@ -263,16 +331,16 @@ FROM (
        )
 )
 GROUP BY owner
-ORDER BY hidden_object_count DESC, hidden_schema;
+ORDER BY inv_object_count DESC, inv_schema;
 
 /******************************************************************
-* SECTION 6: Invalid Objects per Schema
+* SECTION 7: Invalid Objects per Schema
 * - invalid_objects_report.sql
 * - Reports invalid database objects grouped by owner and object type
 * - This must be run with user access to DBA_OBJECTS (or replace with ALL_OBJECTS/USER_OBJECTS)
 ******************************************************************* */
 PROMPT ============================================================
-PROMPT Section 6 - Invalid Objects by Schema
+PROMPT Section 7 - Invalid Objects by Schema
 PROMPT ============================================================
 
 SET PAGESIZE  60
@@ -309,5 +377,5 @@ PROMPT #                 END OF INVENTORY REPORT                  #
 PROMPT ############################################################
 
 SPOOL OFF
-/*SQLPlus will exit at the end of the script run.*/
+/*SQLPlus will exit at the end of the script run if the EXIT is uncommented.*/
 --EXIT;  
