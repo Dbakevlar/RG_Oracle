@@ -4,6 +4,7 @@
 ...# Description: Generates a cross-reference report for a specified
    #              Oracle schema, detailing synonyms, cross-schema to be run from SQL*Plus.
    #              references in PL/SQL code, and grants to other users.
+   # Run this in non-production environments only. This can be resource heavy on large schemas.
    ######################################################################################## 
 */
 set echo off
